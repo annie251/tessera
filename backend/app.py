@@ -1,17 +1,14 @@
-from flask import Flask, jsonify, make_response, request # Importing the Flask library and some helper functions
-import sqlite3 # Library for talking to our database
-from datetime import datetime # We'll be working with dates 
-from werkzeug.security import generate_password_hash
+from flask import Flask, jsonify, make_response, request 
+import sqlite3 
+from datetime import datetime 
+from werkzeug.security import generate_password_hash, check_password_hash
 
-app = Flask(__name__) # Creating a new Flask app. This will help us create API endpoints hiding the complexity of writing network code!
+app = Flask(__name__) # Creating a new Flask app
 
-# This function returns a connection to the database which can be used to send SQL commands to the database
 def get_db_connection():
   conn = sqlite3.connect('../database/tessera.db')
   conn.row_factory = sqlite3.Row
   return conn
-
-@app.route()
 
 @app.route('/events', methods=['GET'])
 def get_events():
@@ -28,16 +25,16 @@ def get_events():
         query_conditions.append('date > ?') # fetching dates AFTER after_date, ? is a placeholder
         params.append(after_date)
 
-    eventLocation = requests.args.get('location')
+    eventLocation = request.args.get('location')
     if eventLocation:
         query_conditions.append('location = ?')
         params.append(eventLocation)
 
-    cursor.execute(query, params)
-    events = cursor.fetchall() 
-
     if query_conditions:
         query += ' WHERE ' + ' AND '.join(query_conditions) # AND only shows up between two strs 
+
+    cursor.execute(query, params)
+    events = cursor.fetchall() 
 
     events_list = [dict(event) for event in events]
     conn.close() 
@@ -45,26 +42,69 @@ def get_events():
     return jsonify(events.list)
 
 
-@app.route('/user', methods=['POST'])
-def create_user(): 
+@app.route('/user/create', methods=['POST'])
+def create_user():
+    # Extract email, username, and password from the JSON payload
     email = request.json.get('email')
     username = request.json.get('username')
     password = request.json.get('password')
 
+    # Basic validation to ensure all fields are provided
     if not email or not username or not password:
         return jsonify({'error': 'All fields (email, username, and password) are required.'}), 400
 
+    # Hash the password
     hashed_password = generate_password_hash(password)
 
-    try: 
+    try:
         conn = get_db_connection()
-        cursor = conn.cursor() 
+        cursor = conn.cursor()
+        
+        # Attempt to insert the new user into the Users table
+        cursor.execute('INSERT INTO Users (email, username, password_hash) VALUES (?, ?, ?)',
+                       (email, username, hashed_password))
+        conn.commit()  # Commit the changes to the database
 
-        cursor.execute('INSERT INTO Users (email, username, password_hash) VALUES (?, ?, ?)', (email, username, hashed_password))
-        conn.commit()
+        # Retrieve the user_id of the newly created user to confirm creation
+        cursor.execute('SELECT user_id FROM Users WHERE username = ?', (username,))
+        new_user_id = cursor.fetchone()
 
-        cursor.execute('SELECT Users.user_id FROM Users WHERE Users.user_id = ?', (username,))
-        new_user_id = cursor.fetchone() 
+        conn.close()
+
+        return jsonify({'message': 'User created successfully', 'user_id': new_user_id['user_id']}), 201
+
+    except sqlite3.IntegrityError:
+        return jsonify({'error': 'Username or email already exists.'}), 409
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/login', methods=['GET'])
+def login():
+    conn = get_db_connection() 
+    cursor = conn.cursor()
+
+    query = 'SELECT username, password_hash FROM Users'
+
+    username = request.json.get('username')
+    password = request.json.get('password_hash')
+
+    if not (username or password): 
+        return jsonify({'error': 'Username/Password needed'}), 422
+
+    cursor.execute('SELECT username FROM Users WHERE username = ?', (username,))
+    user = cursor.fetchone()
+    correctPass = check_password_hash(user.password_hash, password)
+
+    if not correctPass:
+        return jsonify({'error': 'Incorrect password'}), 400
+        
+    conn.close()
+
+    if not user: 
+        return jsonify({'error': 'incorrect username/password'}), 400
+   
+    return jsonify(username, password), 200
 
 
 
