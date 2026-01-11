@@ -39,9 +39,9 @@ def get_events():
     events_list = [dict(event) for event in events]
     conn.close() 
 
-    return jsonify(events.list)
+    return jsonify(events_list)
 
-
+# need to check if there are username duplicates 
 @app.route('/user/create', methods=['POST'])
 def create_user():
     # Extract email, username, and password from the JSON payload
@@ -79,34 +79,62 @@ def create_user():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/login', methods=['GET'])
+@app.route('/login', methods=['POST'])
 def login():
     conn = get_db_connection() 
     cursor = conn.cursor()
 
-    query = 'SELECT username, password_hash FROM Users'
-
     username = request.json.get('username')
-    password = request.json.get('password_hash')
+    password = request.json.get('password')
 
     if not (username or password): 
-        return jsonify({'error': 'Username/Password needed'}), 422
+        return jsonify({'error': 'Username/Password needed'}), 400
 
-    cursor.execute('SELECT username FROM Users WHERE username = ?', (username,))
+    cursor.execute('SELECT * FROM Users WHERE username = ?', (username,))
     user = cursor.fetchone()
-    correctPass = check_password_hash(user.password_hash, password)
+    if not user: 
+        return jsonify({'error': 'Username does not exist'}), 400
+   
+    _, _, db_password, _ = user 
+
+    correctPass = check_password_hash(db_password, password)
 
     if not correctPass:
         return jsonify({'error': 'Incorrect password'}), 400
         
     conn.close()
-
-    if not user: 
-        return jsonify({'error': 'incorrect username/password'}), 400
-   
+    
     return jsonify(username, password), 200
 
+@app.route('/changeData', methods=['PUT'])
+def changeUserData():
+    conn = get_db_connection()
+    cursor = conn.cursor()
 
+    user_id = request.json.get('user_id')
+    username = request.json.get('new_username')
+    email = request.json.get('new_email')
+
+    if not (username and email):
+        return jsonify({'error': 'At least Username or Email is needed to update user data.'}), 400
+    
+    cursor.execute('SELECT * FROM Users WHERE user_id = ?', (user_id,))
+    user = cursor.fetchone()
+    if not user: 
+        return jsonify({'error': 'Username does not exist'}), 400
+
+    user_id, db_username, _, db_email = user
+
+    if username != db_username: 
+        cursor.execute('UPDATE Users SET username = ? WHERE user_id = ?', (username, user_id))
+    
+    print(email, user_id)
+    if email: 
+        if email != db_email:
+            print("performing email change!")
+            cursor.execute('UPDATE Users SET email = ? WHERE user_id = ?', (email, user_id))
+
+    return jsonify({'message': 'User updated successfully'}), 200
 
 if __name__ == '__main__':
     app.run(debug=True)
