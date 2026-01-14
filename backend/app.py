@@ -2,13 +2,47 @@ from flask import Flask, jsonify, make_response, request
 import sqlite3 
 from datetime import datetime 
 from werkzeug.security import generate_password_hash, check_password_hash
+from flask_cors import CORS 
+from pathlib import Path 
 
 app = Flask(__name__) # Creating a new Flask app
+CORS(app)
+
+# DB_PATH = Path(__file__).parent.parent / "database" / "tessera.db"
+# SCHEMA_PATH = Path(__file__).parent / "schema.sql"
+
+def init_db():
+    # checking whether the DB folder exists alr 
+    # DB_PATH.parent.mkdir(parents=True, exist_ok=True) 
+
+    conn = sqlite3.connect("../database/tessera.db")
+    cursor = conn.cursor()
+
+    with open("schema.sql", "r") as f:
+        schema = f.read()
+    
+    cursor.executescript(schema)
+    conn.commit()
+    conn.close()
 
 def get_db_connection():
-  conn = sqlite3.connect('../database/tessera.db')
+  conn = sqlite3.connect("../database/tessera.db")
   conn.row_factory = sqlite3.Row
   return conn
+
+@app.route('/emails', methods=["GET"])
+def getEmails():
+    conn.get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT email FROM Users")
+
+    emails = cursor.fetchall()
+
+    emails_list = [dict(email) for email in emails]
+    conn.close()
+
+    return jsonify(emails)
 
 @app.route('/events', methods=['GET'])
 def get_events():
@@ -128,13 +162,33 @@ def changeUserData():
     if username != db_username: 
         cursor.execute('UPDATE Users SET username = ? WHERE user_id = ?', (username, user_id))
     
-    print(email, user_id)
     if email: 
         if email != db_email:
             print("performing email change!")
             cursor.execute('UPDATE Users SET email = ? WHERE user_id = ?', (email, user_id))
 
+    conn.close()
     return jsonify({'message': 'User updated successfully'}), 200
 
+@app.route('/deleteUser', methods=["DELETE"])
+def deleteUser():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    user_id = request.json.get('user_id')
+
+    if not user_id:
+        return jsonify({'error': 'User_id is needed to delete User'})
+    
+    cursor.execute('DELETE FROM Users WHERE user_id = ?', (user_id,))
+
+    if cursor.rowcount == 0:
+        return jsonify({'error': 'User does not exist'}), 400
+
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'User successfully deleted'}), 200
+
 if __name__ == '__main__':
+    init_db()
     app.run(debug=True)
