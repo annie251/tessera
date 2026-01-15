@@ -1,19 +1,23 @@
-from flask import Flask, jsonify, make_response, request 
 import sqlite3 
-from datetime import datetime 
+import os
+from flask import Flask, jsonify, make_response, request 
+from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_cors import CORS 
 from pathlib import Path 
+from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required, JWTManager
 
+# Initializing and configuring extensions Flask will use 
 app = Flask(__name__) # Creating a new Flask app
+app.config["JWT_SECRET_KEY"] = "super-secret" # need to change to smth else 
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
+jwt = JWTManager(app)
 CORS(app)
 
-# DB_PATH = Path(__file__).parent.parent / "database" / "tessera.db"
-# SCHEMA_PATH = Path(__file__).parent / "schema.sql"
-
 def init_db():
-    # checking whether the DB folder exists alr 
-    # DB_PATH.parent.mkdir(parents=True, exist_ok=True) 
+    # skipping db initalization if it already exists
+    if os.path.exists("../database/tessera.db"):
+        return 
 
     conn = sqlite3.connect("../database/tessera.db")
     cursor = conn.cursor()
@@ -22,6 +26,12 @@ def init_db():
         schema = f.read()
     
     cursor.executescript(schema)
+
+    with open("data.sql", "r") as f:
+        data = f.read()
+    
+    cursor.executescript(data)
+
     conn.commit()
     conn.close()
 
@@ -31,6 +41,7 @@ def get_db_connection():
   return conn
 
 @app.route('/emails', methods=["GET"])
+@jwt_required()
 def getEmails():
     conn.get_db_connection()
     cursor = conn.cursor()
@@ -80,8 +91,8 @@ def get_events():
 def create_user():
     # Extract email, username, and password from the JSON payload
     email = request.json.get('email')
-    username = request.json.get('username')
-    password = request.json.get('password')
+    username = request.json.get('username', None)
+    password = request.json.get('password', None)
 
     # Basic validation to ensure all fields are provided
     if not email or not username or not password:
@@ -121,7 +132,7 @@ def login():
     username = request.json.get('username')
     password = request.json.get('password')
 
-    if not (username or password): 
+    if not (username and password): 
         return jsonify({'error': 'Username/Password needed'}), 400
 
     cursor.execute('SELECT * FROM Users WHERE username = ?', (username,))
@@ -129,7 +140,8 @@ def login():
     if not user: 
         return jsonify({'error': 'Username does not exist'}), 400
    
-    _, _, db_password, _ = user 
+    db_user_id, _, db_password, _, db_account_type = user 
+    access_token = create_access_token(identity=db_user_id, role=db_account_type)
 
     correctPass = check_password_hash(db_password, password)
 
@@ -138,9 +150,10 @@ def login():
         
     conn.close()
     
-    return jsonify(username, password), 200
+    return jsonify(username=username, access_token=access_token), 200
 
 @app.route('/changeData', methods=['PUT'])
+@jwt_required()
 def changeUserData():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -171,6 +184,7 @@ def changeUserData():
     return jsonify({'message': 'User updated successfully'}), 200
 
 @app.route('/deleteUser', methods=["DELETE"])
+@jwt_required()
 def deleteUser():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -188,6 +202,36 @@ def deleteUser():
     conn.commit()
     conn.close()
     return jsonify({'message': 'User successfully deleted'}), 200
+
+@app.route('/events/create', methods=["POST"])
+@jwt_required()
+def create_event():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    identity, role = get_jwt_identity()
+    # if there is no JWT token (aka person is not logged in) OR person is NOT admin, do smth idk
+    if curr_identity is None or role is None or role != 1:
+        return None # idk what to return here, its if there is no authority with the user
+
+    # getting everything needed for an Event row 
+    name = request.json.get('event_name')
+    description = request.json.get('event_description')
+    date = request.json.get('event_date')
+    time = request.json.get('event_time')
+    location = request.json.get('event_location')
+
+    cursor.execute('SELECT event_id FROM Events WHERE name = ?', (name,))
+    existing_event = cursor.fetchone()
+
+    if existing_event:
+        return jsonify({'error': 'event already exists'})
+
+    cursor.execute('INSERT INTO Events (name, description, date, time, location) VALUES (?, ?, ?, ?, ?)', (name, description, date, time, location))
+
+    conn.commit()
+    conn.close()
+    return jsonify(curr_identity)
 
 if __name__ == '__main__':
     init_db()
