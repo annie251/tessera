@@ -4,16 +4,18 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import Navbar from './components/Navbar';
 import EventsPage from './pages/EventsPage';
 import EventDetail from './pages/EventDetail';
+import LoginPage from './pages/LoginPage';
 
 function App() {
   return (
     <ChakraProvider>
       <Router>
-        <Navbar/>
+        
         <Routes>
           <Route path="/events" element={<EventsPage/>}/>
-          <Route path="/" element={<Navigate to="/events" replace/>}/>
+         
           <Route path="/events/:id" element={<EventDetail/>}/>
+          <Route path="/" element={<LoginPage/>}/>
         </Routes>
       </Router>
     </ChakraProvider>
@@ -21,3 +23,7 @@ function App() {
 }
 
 export default App;
+
+// <Navbar/>
+// <Route path="/" element={<Navigate to="/events" replace/>}/>
+

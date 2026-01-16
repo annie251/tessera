@@ -1,5 +1,6 @@
 import sqlite3 
 import os
+from functools import wraps
 from flask import Flask, jsonify, make_response, request 
 from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -13,6 +14,7 @@ app.config["JWT_SECRET_KEY"] = "super-secret" # need to change to smth else
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
 jwt = JWTManager(app)
 CORS(app)
+
 
 def init_db():
     # skipping db initalization if it already exists
@@ -211,8 +213,8 @@ def create_event():
 
     identity, role = get_jwt_identity()
     # if there is no JWT token (aka person is not logged in) OR person is NOT admin, do smth idk
-    if curr_identity is None or role is None or role != 1:
-        return None # idk what to return here, its if there is no authority with the user
+    if role != 1:
+        return jsonify({'error': 'Unauthorized request'}), 403
 
     # getting everything needed for an Event row 
     name = request.json.get('event_name')
@@ -231,7 +233,26 @@ def create_event():
 
     conn.commit()
     conn.close()
-    return jsonify(curr_identity)
+    return jsonify(identity=identity, role=role)
+
+@app.route('/ticket/award', methods=["POST"])
+@jwt_required()
+def award_ticket():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    user_id = request.json.get('user_id')
+    event_id = request.json.get('event_id')
+    quantity = request.json.get('quantity')
+
+    if quantity <= 0:
+        return jsonify({'error': 'Unable to award 0 tickets'})
+
+    purchase_date = datetime.now()
+
+    for i in range(quantity):
+        cursor.execute('INSERT INTO Tickets (event_id, user_id, purchase_date, price) VALUES (?, ?, ?, ?)', (event_id, user_id, purchase_date, 10))
+    
 
 if __name__ == '__main__':
     init_db()
