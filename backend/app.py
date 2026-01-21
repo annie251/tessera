@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_cors import CORS 
 from pathlib import Path 
-from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required, JWTManager
+from flask_jwt_extended import create_access_token, get_jwt_identity, get_jwt, jwt_required, JWTManager
 
 # Initializing and configuring extensions Flask will use 
 app = Flask(__name__) # Creating a new Flask app
@@ -45,7 +45,14 @@ def get_db_connection():
 @app.route('/emails', methods=["GET"])
 @jwt_required()
 def getEmails():
-    conn.get_db_connection()
+
+    claims = get_jwt()
+    role = claims.get("role")
+
+    if role != 1:
+        return jsonify({'error': 'Unauthorized request'}), 403
+
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute("SELECT email FROM Users")
@@ -139,20 +146,22 @@ def login():
 
     cursor.execute('SELECT * FROM Users WHERE username = ?', (username,))
     user = cursor.fetchone()
+
     if not user: 
         return jsonify({'error': 'Username does not exist'}), 400
    
     db_user_id, _, db_password, _, db_account_type = user 
-    access_token = create_access_token(identity=db_user_id, role=db_account_type)
 
     correctPass = check_password_hash(db_password, password)
 
     if not correctPass:
         return jsonify({'error': 'Incorrect password'}), 400
         
+    access_token = create_access_token(identity=str(db_user_id), additional_claims={"role": db_account_type, "username": username})
+
     conn.close()
     
-    return jsonify(username=username, access_token=access_token), 200
+    return jsonify(username=username, access_token=access_token, role=db_account_type), 200
 
 @app.route('/changeData', methods=['PUT'])
 @jwt_required()
@@ -160,11 +169,15 @@ def changeUserData():
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    user_id = request.json.get('user_id')
+    user_id = get_jwt_identity()
     username = request.json.get('new_username')
     email = request.json.get('new_email')
 
-    if not (username and email):
+    print(request.data)
+    print(request.json)
+
+
+    if not (username or email):
         return jsonify({'error': 'At least Username or Email is needed to update user data.'}), 400
     
     cursor.execute('SELECT * FROM Users WHERE user_id = ?', (user_id,))
@@ -172,16 +185,16 @@ def changeUserData():
     if not user: 
         return jsonify({'error': 'Username does not exist'}), 400
 
-    user_id, db_username, _, db_email = user
+    user_id, db_username, _, db_email, role = user
 
-    if username != db_username: 
+    if username and username != db_username: 
         cursor.execute('UPDATE Users SET username = ? WHERE user_id = ?', (username, user_id))
     
-    if email: 
-        if email != db_email:
-            print("performing email change!")
-            cursor.execute('UPDATE Users SET email = ? WHERE user_id = ?', (email, user_id))
-
+    if email and email != db_email:
+        print("performing email change!")
+        cursor.execute('UPDATE Users SET email = ? WHERE user_id = ?', (email, user_id))
+    
+    conn.commit()
     conn.close()
     return jsonify({'message': 'User updated successfully'}), 200
 
@@ -191,7 +204,7 @@ def deleteUser():
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    user_id = request.json.get('user_id')
+    user_id = get_jwt_identity()
 
     if not user_id:
         return jsonify({'error': 'User_id is needed to delete User'})
@@ -211,8 +224,10 @@ def create_event():
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    identity, role = get_jwt_identity()
-    # if there is no JWT token (aka person is not logged in) OR person is NOT admin, do smth idk
+    identity = int(get_jwt_identity())
+    claims = get_jwt()
+    role = claims.get("role")
+
     if role != 1:
         return jsonify({'error': 'Unauthorized request'}), 403
 
@@ -241,7 +256,7 @@ def award_ticket():
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    user_id = request.json.get('user_id')
+    user_id = get_jwt_identity()
     event_id = request.json.get('event_id')
     quantity = request.json.get('quantity')
 
@@ -252,6 +267,10 @@ def award_ticket():
 
     for i in range(quantity):
         cursor.execute('INSERT INTO Tickets (event_id, user_id, purchase_date, price) VALUES (?, ?, ?, ?)', (event_id, user_id, purchase_date, 10))
+    
+    conn.commit()
+    conn.close()
+    return jsonify(user_id, event_id, quantity)
     
 
 if __name__ == '__main__':
